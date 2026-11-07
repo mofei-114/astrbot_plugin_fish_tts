@@ -225,6 +225,40 @@ class DramaPromptTests(unittest.TestCase):
     def test_drama_prompt_forbids_unpaired(self):
         self.assertIn("必须成对", self.ns["_DRAMA_EMOTION_PROMPT"])
 
+    def test_drama_prompt_demands_concrete_vocal_detail(self):
+        """提示词必须要求"具体到发声"，而不是只写情绪词——这是生动度的关键。"""
+        prompt = self.ns["_DRAMA_EMOTION_PROMPT"]
+        self.assertIn("具体到发声", prompt)
+        # 至少给出一个包含音高/气声/语速这类发声维度的正例
+        self.assertTrue(
+            any(kw in prompt for kw in ("气声", "音调", "语速", "共鸣")),
+            "缺少具体发声维度的示例",
+        )
+
+    def test_drama_prompt_requires_emotional_shift(self):
+        """必须强制一条回复里出现情绪转折，禁止从头到尾一个调子。"""
+        prompt = self.ns["_DRAMA_EMOTION_PROMPT"]
+        self.assertIn("情绪转折", prompt)
+        self.assertIn("整段只有一个调子是错的", prompt)
+
+    def test_drama_prompt_has_contrast_example(self):
+        """必须带"差/好"正反对照，模型对对照样本最敏感。"""
+        prompt = self.ns["_DRAMA_EMOTION_PROMPT"]
+        self.assertIn("差：", prompt)
+        self.assertIn("好：", prompt)
+
+    def test_drama_prompt_forbids_angle_bracket_pause(self):
+        """停顿只能写方括号，不能写成 <pause>——否则会撞上成对标签解析。"""
+        self.assertIn("不要写成 <pause>", self.ns["_DRAMA_EMOTION_PROMPT"])
+
+    def test_drama_prompt_has_upper_bound(self):
+        """必须有数量上限，防止模型堆砌指令。"""
+        self.assertIn("最多 3~4 个", self.ns["_DRAMA_EMOTION_PROMPT"])
+
+    def test_drama_prompt_has_no_pc_tts_protocol(self):
+        """不能出现 <pc_tts>：本插件不解析这个协议，会被原样念出来。"""
+        self.assertNotIn("pc_tts", self.ns["_DRAMA_EMOTION_PROMPT"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
