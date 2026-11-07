@@ -126,8 +126,15 @@ def _is_drama_model(model) -> bool:
 
 
 def _emotion_prompt_for(model, configured: str) -> str:
-    """按模型挑默认的情绪标签说明；用户在设置里改过就用用户的。"""
-    return _DRAMA_EMOTION_PROMPT if _is_drama_model(model) else configured
+    """按模型挑默认的情绪标签说明。用户改过设置就用用户的，没改过才用按模型的默认。
+
+    「改过」的判定：配置值和 S2 默认值不同。因为 schema 里 emotion.prompt 的 default
+    就是 _DEFAULT_EMOTION_PROMPT，用户没填时读出来的正是它，此时才应该换成 drama 版。
+    """
+    configured = (configured or "").strip()
+    if configured and configured != _DEFAULT_EMOTION_PROMPT.strip():
+        return configured  # 用户自定义优先
+    return _DRAMA_EMOTION_PROMPT if _is_drama_model(model) else _DEFAULT_EMOTION_PROMPT
 
 
 # ---------- 配置读取 ----------

@@ -197,14 +197,25 @@ class DramaPromptTests(unittest.TestCase):
         for model in ("s2.1-pro", "s2-pro", "s2.1-pro-free", "s1", "", None):
             self.assertFalse(is_drama(model), model)
 
-    def test_prompt_switches_by_model(self):
+    def test_prompt_switches_to_drama_default_when_unset(self):
+        """用户没改过（配置值仍是 S2 默认）时，drama-3 换成 drama 版。"""
         pick = self.ns["_emotion_prompt_for"]
-        fallback = "S2 默认说明"
-        drama = pick("drama-3", fallback)
+        s2_default = self.ns["_DEFAULT_EMOTION_PROMPT"]
+        drama = pick("drama-3", s2_default)
         self.assertIn("导演", drama)
         self.assertIn("<whisper>", drama)
-        self.assertNotEqual(drama, fallback)
-        self.assertEqual(pick("s2.1-pro", fallback), fallback)
+        self.assertNotEqual(drama, s2_default)
+        # 非 drama 模型保持原值
+        self.assertEqual(pick("s2.1-pro", s2_default), s2_default)
+
+    def test_custom_prompt_wins_over_drama_default(self):
+        """用户自定义过的说明必须优先，不能被 drama 版覆盖（回归测试）。"""
+        pick = self.ns["_emotion_prompt_for"]
+        custom = "我自己写的说明，只提到 [轻笑] 这一件事"
+        self.assertEqual(pick("drama-3", custom), custom)
+        self.assertEqual(pick("s2.1-pro", custom), custom)
+        # 空白值回退到按模型的默认
+        self.assertIn("导演", pick("drama-3", "   "))
 
     def test_drama_prompt_lists_all_seven_tags(self):
         prompt = self.ns["_DRAMA_EMOTION_PROMPT"]
