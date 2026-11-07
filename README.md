@@ -305,4 +305,10 @@ drama-3 版（模型选 drama-3 时自动使用）：
 - **v2.0**：语音记忆（记录语音内容、识别被引用的语音、补充最近语音）；配置一次读取、自定义正则预编译，无效正则只提醒一次；卸载时保存未落盘的记录。
 - v1.3：同一轮对话重复回复去重。
 
-仓库：https://github.com/zhouinzhe/astrbot_plugin_fish_tts
+仓库：https://github.com/mofei-114/astrbot_plugin_fish_tts
+上游：https://github.com/zhouinzhe/astrbot_plugin_fish_tts
+
+## 许可
+
+本项目沿用上游的 MIT 许可（见 [LICENSE](LICENSE)），原始版权归 zhouinzhe 所有。
+本仓库的 drama-3 适配改动同样以 MIT 发布。
