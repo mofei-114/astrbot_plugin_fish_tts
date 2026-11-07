@@ -92,6 +92,11 @@ _NOTE_QUOTE_TEXT = "（系统补充：用户这条消息引用的是你之前发
 # ---------- Fish Audio（v3.0） ----------
 _BACKENDS = ("fish", "astrbot")
 _DEFAULT_MODEL = "s2.1-pro"
+# drama-3：Fish Audio 的"导演"模型。方括号是自然语言指令（任意语言），
+# 另有 7 个成对尖括号标签只改局部几个词的读法。选它时自动打开这两项能力。
+_DRAMA_MODEL = "drama-3"
+# 模型名一旦以这些前缀开头，就走 S2/S1 的老语法，不启用 drama-3 的成对标签。
+_DRAMA_PREFIX = "drama"
 _DEFAULT_EMOTION_PROMPT = (
     "【语音情绪标签】你的回复可能会被转成语音。想表达语气时，可以在句子开头加一个方括号情绪标签，"
     "例如：[happy] [sad] [angry] [excited] [surprised] [nervous] [calm] [curious] [sarcastic] "
@@ -99,6 +104,30 @@ _DEFAULT_EMOTION_PROMPT = (
     "规则：标签只用英文，放在句首，每句最多 1~2 个；[laughing]、[sighing] 这类声音标签后面要跟上对应的拟声词"
     "（如“[laughing] 哈哈”）；语气平淡的句子不加标签，不要每句话都加；不要解释标签，也不要把标签当成对话内容。"
 )
+# drama-3 专用：方括号里写自然语言（中文也行），另有 7 个成对标签改局部词的读法。
+_DRAMA_EMOTION_PROMPT = (
+    "【语音导演指令】你的回复可能会被转成语音，朗读引擎支持「导演式」表演指令。"
+    "想控制这句话怎么演时，在它前面加一个方括号指令，用你自己话描述情绪、意图、节奏或在对谁说话，"
+    "中文或英文都行，例如：[温柔地，像贴近对方说话] [有点累了，声音低下去] [急促，像在赶时间]。\n"
+    "规则：\n"
+    "1. 指令写在它要影响的那句话前面；只在语气真的需要变化时加，不要每句都加。\n"
+    "2. 想只改句中个别词的读法，用成对尖括号包住那几个词，只支持这七个："
+    "<whisper> <emphasis> <soft> <fast> <slow> <stress> <forceful>，"
+    "例如：没关系，<soft>慢慢来</soft>。标签必须成对，不要落单。\n"
+    "3. 叹气、笑声、吸气、短暂停顿也可以直接写进方括号，放在发生的位置：[叹了口气] [轻笑] [停顿]。\n"
+    "4. 不要把动作描写、外貌或剧情说明当成台词念出来；不要解释标签，也不要把标签当成对话内容。\n"
+    "5. 每段最多 1~2 个方括号指令，克制使用。"
+)
+
+
+def _is_drama_model(model) -> bool:
+    """模型是不是 drama 系列（drama-3 / drama-3-preview 都算）。"""
+    return str(model or "").strip().casefold().startswith(_DRAMA_PREFIX)
+
+
+def _emotion_prompt_for(model, configured: str) -> str:
+    """按模型挑默认的情绪标签说明；用户在设置里改过就用用户的。"""
+    return _DRAMA_EMOTION_PROMPT if _is_drama_model(model) else configured
 
 
 # ---------- 配置读取 ----------
@@ -208,9 +237,15 @@ def _prepare(raw: str, cfg: Settings) -> tuple:
 
     返回 (送去合成的文本, 去掉情绪标签的文本, 提取到的链接, 原文是否含代码块, 正文里是否有文本形式的 @)。
     长度判断基于去掉标签的文本，所以很长的链接、情绪标签都不会让短回复变成"长文本"。
+
+    drama-3 的成对尖括号标签（<soft>…</soft>）在进来时先换成占位符，
+    免得后面的 markdown 清理把 ``<>`` 吃掉；最后一步再还原回去。
     """
     urls: list = []
     text = raw
+    paired_tags: list = []
+    if cfg.emotion is not None and cfg.emotion.paired:
+        text, paired_tags = emotion.mask_paired(text, cfg.emotion)
 
     has_code = bool(_CODE_FENCE.search(text))
     text = _CODE_FENCE.sub(" ", text)
@@ -255,6 +290,10 @@ def _prepare(raw: str, cfg: Settings) -> tuple:
         plain = _SPACES.sub(" ", emotion.strip(text, cfg.emotion)).strip()
     else:
         tagged = plain = text
+    # 还原成对标签：只回到送合成的那份文本里；plain 是给用户看/算长度的，保持干净。
+    if paired_tags:
+        tagged = emotion.unmask_paired(tagged, paired_tags)
+        plain = emotion.unmask_paired(plain, [""] * len(paired_tags))
     return tagged, plain, list(dict.fromkeys(urls)), has_code, has_at
 
 
@@ -506,6 +545,7 @@ class FishTTSPlugin(Star):
         keywords = m.get("recent_keywords")
         recent_mode = _as_str(m.get("recent_mode"), "keywords")
         backend = _as_str(f.get("backend"), "fish")
+        model = _as_str(f.get("model"), _DEFAULT_MODEL)
         tts_timeout = _as_float(b.get("tts_timeout"), 30.0, lo=0.0)
         rules = None
         if _as_bool(e.get("enabled"), True):
@@ -513,6 +553,8 @@ class FishTTSPlugin(Star):
                 _as_str(e.get("tag_mode"), "any"),
                 _as_list(e.get("extra_tags")),
                 _as_int(e.get("max_tags"), 6, lo=0, hi=50),
+                # drama-3 的成对尖括号标签只在 drama 系列模型下识别
+                paired=_is_drama_model(model) and _as_bool(e.get("paired_tags"), True),
             )
         return Settings(
             enabled=_as_bool(b.get("enabled"), True),
@@ -521,7 +563,9 @@ class FishTTSPlugin(Star):
             emotion=rules,
             strip_tags_in_text=_as_bool(e.get("strip_in_text"), True),
             inject_emotion_prompt=_as_bool(e.get("inject_prompt"), False),
-            emotion_prompt=_as_str(e.get("prompt"), _DEFAULT_EMOTION_PROMPT),
+            emotion_prompt=_emotion_prompt_for(
+                model, _as_str(e.get("prompt"), _DEFAULT_EMOTION_PROMPT)
+            ),
             skip_platforms=_as_list(b.get("skip_platforms")),
             only_llm=_as_bool(b.get("only_llm_result"), True),
             max_chars=_as_int(b.get("max_chars"), 80),
@@ -859,6 +903,12 @@ class FishTTSPlugin(Star):
             return None
         if length < cfg.min_chars:
             return None
+        if cfg.emotion is not None and emotion.has_unpaired(raw, cfg.emotion):
+            # 落单的 <soft> 会让效果作用到整段；提醒一次，但不拦这条语音
+            logger.warning(
+                "[fish_tts] 台词里有未闭合的成对标签（<soft> 这类必须成对），"
+                "drama-3 可能把效果作用到整段：请检查模型输出"
+            )
         shown = emotion.strip_outside_code(raw, cfg.emotion) if cfg.emotion is not None else raw
         return _Plan(raw=shown, spoken=spoken, plain=plain, urls=urls)
 
@@ -950,7 +1000,10 @@ class FishTTSPlugin(Star):
 
         limit = f"≤ {cfg.max_chars}" if cfg.max_chars > 0 else "（不限长）"
         tags = emotion.count(plan.spoken, cfg.emotion) if cfg.emotion is not None else 0
+        paired = emotion.count_paired(plan.spoken, cfg.emotion) if cfg.emotion is not None else 0
         extra = f"，含 {tags} 个情绪标签" if tags else ""
+        if paired:
+            extra += f"、{paired} 个成对标签"
         logger.info(f"[fish_tts] {len(plan.plain)} 字 {limit}，已转为语音{extra}")
         return True
 

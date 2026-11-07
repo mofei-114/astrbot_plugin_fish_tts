@@ -1,11 +1,12 @@
 name: astrbot_plugin_fish_tts
-display_name: Fish TTS优化
-short_desc: Fish Audio 语音优化：短句转语音、长文发文字，支持 S2 情绪标签、多音色保存切换，插件页面可管理和试听音色。
-desc: Fish TTS优化：直连 Fish Audio（可走自建反代），短句开口说、长文发文字；支持 S2 情绪标签 [happy] [whispering]，发文字时自动去标签；可保存多个带备注的音色 ID 并随时切换，插件页面里能管理、试听；另带语音记忆，让大模型知道自己发过什么语音、被引用的是哪一句。
-version: 3.4.0
+display_name: Fish TTS优化 (drama-3)
+short_desc: Fish Audio 语音优化：短句转语音、长文发文字；支持 S2 情绪标签与 drama-3 自然语言导演指令、局部成对语气标签；多音色保存切换，插件页面可管理和试听。
+desc: Fish TTS优化（drama-3 适配版）：直连 Fish Audio（可走自建反代），短句开口说、长文发文字。除 S2 的 [happy] 情绪标签外，选中 drama-3 时支持用自然语言写方括号导演指令（[温柔地，像贴近对方说话]），以及 <whisper> <emphasis> <soft> <fast> <slow> <stress> <forceful> 七个只改局部词语气的成对标签；发文字时自动去掉全部标签。可保存多个带备注的音色 ID 并随时切换，插件页面里能管理、试听；另带语音记忆，让大模型知道自己发过什么语音、被引用的是哪一句。
+version: 3.5.0-drama3
 astrbot_version: ">=4.26.0"
 author: zhouinzhe
 repo: https://github.com/zhouinzhe/astrbot_plugin_fish_tts
 tags:
   - tts
   - fish-audio
+  - drama-3

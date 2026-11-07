@@ -1,13 +1,16 @@
-# Fish TTS优化
+# Fish TTS优化（drama-3 适配版）
 
-> 短句开口说，长文发文字。直连 [Fish Audio](https://fish.audio)，支持 S2 情绪标签，发文字时自动去标签。
+> 短句开口说，长文发文字。直连 [Fish Audio](https://fish.audio)，支持 S2 情绪标签与 **drama-3 导演指令**，发文字时自动去标签。
 
 - 🐟 **直连 Fish**：插件自己调用 Fish API，可走自建 Cloudflare Worker 反代，不依赖 AstrBot 的 TTS 设置
+- 🎬 **drama-3 导演指令**：模型选 `drama-3` 后，方括号里可以写任意自然语言（中文也行）描述这场戏怎么演；另有 7 个成对尖括号标签只改局部几个词
 - 🎙️ **音色库**：保存多个音色 ID（可写备注），随时切换，重启不丢；插件页面里点一下就能试听
 - 🎭 **情绪标签**：`[happy]`、`[whispering]`、`[laughing]` 转语音时交给 Fish，发文字时自动去掉
 - ✂️ **长短分流**：短回复转语音，长回复发文字；链接、代码块、Emoji、@ 自动过滤
 - 🧠 **语音记忆**：记下每条语音说了什么，别人引用这条语音时告诉大模型
 
+> **本仓库是 [zhouinzhe/astrbot_plugin_fish_tts](https://github.com/zhouinzhe/astrbot_plugin_fish_tts) v3.4.0 的二次开发分支**，在原版基础上适配 Fish Audio 的 `drama-3` 模型（MIT 许可，见 `LICENSE`）。改动清单见文末「相对上游的改动」。
+>
 > 原名「TTS 长短分流」（`astrbot_plugin_tts_by_length`），v3.2 起改名为 **Fish TTS优化**，插件标识和仓库改为 `astrbot_plugin_fish_tts`。
 > 从旧插件换过来：设置需要重新填一次；旧的语音记录在 `data/plugin_data/astrbot_plugin_tts_by_length/`，需要的话把 `voice_memory.json` 复制到 `data/plugin_data/astrbot_plugin_fish_tts/`。
 
@@ -70,28 +73,84 @@ AstrBot **4.26.0 及以上**（用到了插件页面、临时内容块等新接�
 - 试听会真实调用 Fish 接口，和正常合成一样计费。
 
 ## 情绪标签
+
+### S2 系列
 Fish 的 S2 模型用方括号控制语气：`[happy] 今天天气真好`、`[sad][whispering] 我想你了`、`[laughing] 哈哈 笑死我了`。
+
+### drama-3（导演模型）
+在 **🐟 Fish 语音合成 → 模型** 里选 `drama-3` 后，多出两种能力：
+
+**1. 方括号 = 自然语言导演指令**
+
+不用再局限于固定词表，直接描述这场戏该怎么演，中文英文都行：
+
+```
+[温柔地，像贴近对方说话] 你来啦。
+[有点累了，声音低下去] 今天好长啊。
+[急促，像在赶时间] 快点快点，来不及了。
+```
+
+叹气、笑声、吸气、停顿也直接写在方括号里，放在发生的位置：`[叹了口气] 算了。[轻笑] 你猜怎么着？`
+
+**2. 成对尖括号 = 只改局部几个词**
+
+想把某几个词的读法改一下、其余不变，用成对标签包住它们。**只有这七个**：
+
+| 标签 | 效果 |
+|---|---|
+| `<whisper>…</whisper>` | 这几个词用耳语 |
+| `<emphasis>…</emphasis>` | 加重强调 |
+| `<soft>…</soft>` | 放轻放柔 |
+| `<fast>…</fast>` | 加快 |
+| `<slow>…</slow>` | 放慢 |
+| `<stress>…</stress>` | 重读 |
+| `<forceful>…</forceful>` | 用力、强硬 |
+
+```
+[轻声安慰] 没关系，<soft>慢慢来</soft>。
+[压着火] 我说了，<stress>最后一遍</stress>。
+```
+
+**必须成对**。落单的 `<soft>` 不会报错，但效果可能作用到整段——插件检测到会在日志里警告一次。
+
+### 标签处理规则（两套语法通用）
 
 | 场景 | 插件怎么处理 |
 |---|---|
 | 转语音 | 标签原样交给 Fish（全角 `［］` 换成半角；一条最多保留设定个数） |
 | 算长度 | 标签不计入字数（`[excited][laughing] 哈哈` 只算 2 个字） |
-| 发文字（太长、含 @、合成失败……） | 自动去掉标签；代码块和行内代码里的方括号不动 |
+| 发文字（太长、含 @、合成失败……） | 自动去掉标签；代码块和行内代码里的不动 |
 | 语音记忆、去重 | 按去掉标签的文本，`[happy] 好呀` 和 `[excited] 好呀` 算同一句 |
 | 只有标签没有文字（如 `[laughing]`） | 不转语音；发文字时这条会被丢掉 |
 
+> drama-3 的成对标签在内部会先换成占位符再走 markdown 清理，最后还原——否则 `_MD_MARK` 会把 `>` 吃掉，`<soft>` 变成 `<soft`，指令就失效了。
+
 **让大模型写出标签**，两种办法：
-1. 开 **🎭 情绪标签 → 自动给大模型加标签使用说明**：插件每次请求把下面这段追加到系统提示词末尾（固定文本，不影响提示词缓存）。
+1. 开 **🎭 情绪标签 → 自动给大模型加标签使用说明**：插件每次请求把下面这段追加到系统提示词末尾（固定文本，不影响提示词缓存）。**选 drama-3 时会自动换成 drama-3 版说明**，不需要你手改。
 2. 手动把它贴进人设，按角色改写，比如只保留会用到的标签。
+
+S2 版（模型不是 drama 系列时用）：
 
 ```
 【语音情绪标签】你的回复可能会被转成语音。想表达语气时，可以在句子开头加一个方括号情绪标签，例如：[happy] [sad] [angry] [excited] [surprised] [nervous] [calm] [curious] [sarcastic] [whispering] [soft tone] [laughing] [sighing]。
 规则：标签只用英文，放在句首，每句最多 1~2 个；[laughing]、[sighing] 这类声音标签后面要跟上对应的拟声词（如“[laughing] 哈哈”）；语气平淡的句子不加标签，不要每句话都加；不要解释标签，也不要把标签当成对话内容。
 ```
 
+drama-3 版（模型选 drama-3 时自动使用）：
+
+```
+【语音导演指令】你的回复可能会被转成语音，朗读引擎支持「导演式」表演指令。想控制这句话怎么演时，在它前面加一个方括号指令，用你自己话描述情绪、意图、节奏或在对谁说话，中文或英文都行，例如：[温柔地，像贴近对方说话] [有点累了，声音低下去] [急促，像在赶时间]。
+规则：
+1. 指令写在它要影响的那句话前面；只在语气真的需要变化时加，不要每句都加。
+2. 想只改句中个别词的读法，用成对尖括号包住那几个词，只支持这七个：<whisper> <emphasis> <soft> <fast> <slow> <stress> <forceful>，例如：没关系，<soft>慢慢来</soft>。标签必须成对，不要落单。
+3. 叹气、笑声、吸气、短暂停顿也可以直接写进方括号，放在发生的位置：[叹了口气] [轻笑] [停顿]。
+4. 不要把动作描写、外貌或剧情说明当成台词念出来；不要解释标签，也不要把标签当成对话内容。
+5. 每段最多 1~2 个方括号指令，克制使用。
+```
+
 **哪些方括号算标签**
-- `any`（默认）：任何不超过 40 字的短方括号。S2 支持自然语言描述，`[softly laughing]`、`[轻声]` 也能用。`[CQ:…]`、`[At:…]`、`[1]`、`arr[i]`、Markdown 链接不会被误判。
-- `whitelist`：只认 Fish 文档里的标签，再加上你在「额外标签」里补充的。
+- `any`（默认）：任何不超过 40 字的短方括号。S2 支持自然语言描述，`[softly laughing]`、`[轻声]` 也能用；drama-3 更是完全靠自然语言指令工作。`[CQ:…]`、`[At:…]`、`[1]`、`arr[i]`、Markdown 链接不会被误判。
+- `whitelist`：只认 Fish 文档里的标签，再加上你在「额外标签」里补充的。**选 drama-3 时不要用这个**，否则中文指令会被当成普通文字念出来。
 
 **标签速查**（完整列表见 Fish 文档 [Emotion Control](https://docs.fish.audio/developer-guide/core-features/emotions)）
 - 情绪：`happy sad angry excited calm nervous surprised curious sarcastic worried embarrassed grateful disappointed hopeful lonely …`
@@ -218,8 +277,26 @@ Fish 的 S2 模型用方括号控制语气：`[happy] 今天天气真好`、`[sa
 | 标签被念出来了 | 多半是模型不是 S2；检查「模型」（`astrbot` 方式下检查提供商用的模型） |
 | 语音没有情绪变化 | 日志里没有"含 N 个情绪标签"：大模型没写标签，开自动加说明或把说明贴进人设 |
 | 文字里出现了 `[happy]` | 这条消息没经过本插件（Agent 工具发的 / 被跳过的平台），见情绪标签的限制 |
+| 文字里出现了 `<soft>` | 检查「模型」是否真的是 `drama-3`（成对标签只在 drama 系列下识别），以及「识别 drama-3 的成对尖括号标签」是否被关掉了 |
+| 日志警告"未闭合的成对标签" | 大模型写了 `<soft>` 却没写 `</soft>`；drama-3 会把效果作用到整段。可在人设里强调"必须成对" |
+| 选了 drama-3 但语气没变化 | `tag_mode` 被设成了 `whitelist`，中文指令不在白名单里会被当普通文字念。改回 `any` |
+
+## 相对上游的改动
+
+本仓库基于 [zhouinzhe/astrbot_plugin_fish_tts](https://github.com/zhouinzhe/astrbot_plugin_fish_tts) v3.4.0（MIT），在该版本上适配 Fish Audio `drama-3`：
+
+| 文件 | 改动 |
+|---|---|
+| `_conf_schema.json` | `fish.model.options` 增加 `drama-3`；新增 `emotion.paired_tags` 开关；更新 model / tag_mode 的 hint |
+| `emotion.py` | 新增 `PAIRED_TAGS`（7 个）、`EmotionRules.paired`、`mask_paired()` / `unmask_paired()` / `strip_paired()` / `count_paired()` / `has_unpaired()`；`strip_outside_code()` 改为同时处理两种语法且共用代码段切分 |
+| `main.py` | 新增 `_DRAMA_MODEL` / `_DRAMA_EMOTION_PROMPT` / `_is_drama_model()` / `_emotion_prompt_for()`；`_settings()` 按模型决定是否启用成对标签并切换提示词；`_prepare()` 合成前 mask、还原，避免 `_MD_MARK` 吃掉 `<>`；`_decide()` 检测落单标签并告警；日志补成对标签计数 |
+| `metadata.yaml` | 版本改为 `3.5.0-drama3`，展示名与描述补上 drama-3 |
+| `tests/` | 新增 34 个测试（`test_drama3.py` 27 个纯函数测试 + `test_prepare_end_to_end.py` 7 个链路测试） |
+
+**关键设计**：成对标签在 `_prepare()` 开头被换成不含特殊字符的占位符（`\x00pairedN\x00`），走完 markdown 清理 / 去 Emoji / 去 @ 之后再还原成送合成的那份文本。否则上游的 `_MD_MARK = [*`~#>]+` 会把 `>` 删掉，`<soft>` 变成 `<soft`，drama-3 收不到指令。
 
 ## 更新日志
+- **v3.5.0-drama3**（本分支）：适配 Fish Audio `drama-3`。模型下拉新增 `drama-3`；支持自然语言方括号导演指令（中文可用）；支持 `<whisper>` `<emphasis>` `<soft>` `<fast>` `<slow>` `<stress>` `<forceful>` 七个成对尖括号标签，发文字时整对剥除、代码段内不动；选中 drama-3 时自动切换成 drama-3 版提示词；落单成对标签会在日志告警。新增 34 个测试。
 - **v3.4**：新增插件页面「音色库」（添加 / 编辑 / 删除 / 切换 / 试听）；音色可以写备注；删除所有兼容老版本 AstrBot 的代码，声明最低版本 AstrBot 4.26.0。
 - **v3.3**：新增音色库（`/fish音色` 指令，保存多个音色 ID、切换、删除）；语音记忆的补充说明改用临时内容块注入（不入历史、不动系统提示词，缓存命中更好，老版本自动退回原做法）；去掉 v3.0 以前设置的自动迁移；代码整理：配置转换函数合并、重复的异常类型合并、`try/except pass` 改 `contextlib.suppress`、白名单判断不再在循环里重复合并集合。
 - **v3.2**：插件标识和仓库改名为 `astrbot_plugin_fish_tts`；图标换成 Fish 的标志；日志前缀改为 `[fish_tts]`。

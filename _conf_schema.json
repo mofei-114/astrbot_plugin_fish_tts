@@ -92,14 +92,16 @@
         "options": [
           "s2.1-pro",
           "s2-pro",
-          "s2.1-pro-free"
+          "s2.1-pro-free",
+          "drama-3"
         ],
         "labels": [
           "s2.1-pro（推荐）",
           "s2-pro",
-          "s2.1-pro-free（免费额度）"
+          "s2.1-pro-free（免费额度）",
+          "drama-3（导演模型，支持自然语言表演指令）"
         ],
-        "hint": "情绪标签 [happy] 这类方括号写法需要 S2 系列模型。s2.1-pro 为推荐；免费开发者额度用 s2.1-pro-free。不要选 s1（它用圆括号写法，已计划下线）。"
+        "hint": "s2.1-pro 为推荐；免费开发者额度用 s2.1-pro-free。选 drama-3 后可以用中英文自然语言写方括号指令（如 [温柔地，像贴近对方说话]），并额外支持 <whisper> <emphasis> <soft> <fast> <slow> <stress> <forceful> 七个成对标签；插件会自动把情绪标签说明换成 drama-3 版。不要选 s1（它用圆括号写法，已计划下线）。"
       },
       "format": {
         "description": "音频格式",
@@ -225,7 +227,13 @@
           "any：任何短方括号（推荐）",
           "whitelist：仅已知标签"
         ],
-        "hint": "any：任何不超过 40 字的短方括号都算（Fish S2 支持自然语言描述，如 [softly laughing]、[轻声]），[CQ:…]、[At:…]、[1]、arr[i] 这类不会误判；whitelist：只认 Fish 文档里的标签，再加上「额外标签」。"
+        "hint": "any：任何不超过 40 字的短方括号都算（Fish S2 支持自然语言描述，如 [softly laughing]、[轻声]，drama-3 更是完全靠自然语言指令），[CQ:…]、[At:…]、[1]、arr[i] 这类不会误判；whitelist：只认 Fish 文档里的标签，再加上「额外标签」。选 drama-3 时建议保持 any，否则中文指令会被当成普通文字念出来。"
+      },
+      "paired_tags": {
+        "description": "识别 drama-3 的成对尖括号标签",
+        "type": "bool",
+        "default": true,
+        "hint": "只在模型选 drama-3（或其它 drama 系列）时生效。开启后识别 <whisper>…</whisper>、<soft>…</soft> 这七个只改局部词语气的标签：合成时原样送给 Fish，发文字时整对去掉（代码块里的不动）。关掉后尖括号会被当成普通字符。"
       },
       "extra_tags": {
         "description": "额外标签（白名单模式用）",

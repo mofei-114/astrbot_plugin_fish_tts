@@ -1,11 +1,20 @@
-"""Fish Audio S2 情绪标签：识别、整理、去除。
+"""Fish Audio 情绪标签：识别、整理、去除。
 
-纯 Python，不依赖 AstrBot，方便单独测试。S2 模型用方括号写情绪/语气，例如
-``[happy] 今天天气真好``、``[sad][whispering] 我想你了``。这个模块负责三件事：
+纯 Python，不依赖 AstrBot，方便单独测试。分两套语法：
+
+**S2 系列**——方括号写情绪/语气，例如 ``[happy] 今天天气真好``、``[sad][whispering] 我想你了``。
+
+**Drama 3**——方括号是"导演指令"（自然语言，任意语言都行），另外多一种只改局部几个词的
+成对尖括号标签：``<whisper>`` ``<emphasis>`` ``<soft>`` ``<fast>`` ``<slow>`` ``<stress>``
+``<forceful>``，例如 ``[轻声安慰]没关系，<soft>慢慢来。</soft>``。
+成对标签只在 ``EmotionRules.paired`` 为真时识别（由选择 drama-3 模型自动打开）。
+
+这个模块负责三件事：
 
 1. 认出哪些方括号是情绪标签（不误伤 ``[CQ:at,...]``、``[1]``、``arr[i]`` 之类）；
-2. 送去合成前整理标签（全角括号换成半角、限制数量）；
-3. 不转语音、发文字时把标签去掉（代码块和行内代码里的方括号不动）。
+2. 送去合成前整理标签（全角括号换成半角、限制数量；成对标签换成占位符保护起来，
+   免得被 Markdown 清理吃掉 ``<>``）；
+3. 不转语音、发文字时把标签去掉（代码块和行内代码里的标签不动）。
 """
 
 import re
@@ -38,6 +47,13 @@ _MODIFIERS = ("slightly", "very", "extremely", "a bit", "somewhat")
 
 KNOWN_TAGS = frozenset((*_BASIC, *_ADVANCED, *_TONES, *_EFFECTS, *_SPECIAL, *_SEEN))
 
+# ---------- Drama 3 的成对尖括号标签 ----------
+# Fish Audio 文档 "Change only specific words" 一节列出的完整集合，只有这 7 个。
+# 它们只改被包住那几个词的读法，所以必须成对出现：<soft>慢慢来。</soft>
+PAIRED_TAGS = frozenset((
+    "whisper", "emphasis", "soft", "fast", "slow", "stress", "forceful",
+))
+
 MODES = ("any", "whitelist")
 
 # 方括号（半角或全角）里 1~40 个字符，不含嵌套括号和换行。
@@ -47,15 +63,26 @@ _TAG = re.compile(r"(?<![A-Za-z0-9_\)])[\[［]([^\[\]［］\r\n]{1,40})[\]］](?
 _HAS_LETTER = re.compile(r"[^\W\d_]")  # 至少有一个字母/汉字，排除 [1]、[2-3]、[...]
 _CODE_SPLIT = re.compile(r"(```.*?```|`[^`\n]+`)", re.DOTALL)
 
+# 单个尖括号标签（开或闭都匹配）。只认 PAIRED_TAGS 里的名字，大小写不敏感。
+_ANY_PAIRED = re.compile(
+    r"<\s*(/)?\s*(" + "|".join(sorted(PAIRED_TAGS, key=len, reverse=True)) + r")\s*>",
+    re.IGNORECASE,
+)
+# 占位符：合成前把成对标签换成它，避开 markdown 清理（_MD_MARK 会吃掉 ">"）。
+# 用控制字符，既不会被 \w 匹配，也不会被 URL / Emoji / 空白规则碰到。
+_MASK = "\x00paired{}\x00"
+_MASK_RE = re.compile(r"\x00paired(\d+)\x00")
+
 
 @dataclass(frozen=True)
 class EmotionRules:
     mode: str = "any"  # any：任何短方括号都当标签（S2 支持自然语言描述）；whitelist：只认已知标签
     extra: frozenset = frozenset()  # 白名单模式下额外认可的标签（小写）
     max_tags: int = 6  # 一条语音最多保留几个标签；0 = 不限制
+    paired: bool = False  # 是否识别 drama-3 的成对尖括号标签（<whisper>…</whisper>）
 
 
-def make_rules(mode: str = "any", extra=(), max_tags: int = 6) -> EmotionRules:
+def make_rules(mode: str = "any", extra=(), max_tags: int = 6, paired: bool = False) -> EmotionRules:
     mode = mode if mode in MODES else "any"
     cleaned = set()
     for item in extra or ():
@@ -66,7 +93,9 @@ def make_rules(mode: str = "any", extra=(), max_tags: int = 6) -> EmotionRules:
         limit = max(0, int(max_tags))
     except (TypeError, ValueError):
         limit = 6
-    return EmotionRules(mode=mode, extra=frozenset(cleaned), max_tags=limit)
+    return EmotionRules(
+        mode=mode, extra=frozenset(cleaned), max_tags=limit, paired=bool(paired)
+    )
 
 
 def is_tag(inner: str, rules: EmotionRules) -> bool:
@@ -131,11 +160,102 @@ def strip(text: str, rules: EmotionRules) -> str:
 
 
 def strip_outside_code(text: str, rules: EmotionRules) -> str:
-    """发文字时用：代码块和行内代码里的方括号保持原样，其余地方去掉标签。"""
+    """发文字时用：代码块和行内代码里的标签保持原样，其余地方去掉标签。
+
+    方括号标签和成对尖括号标签（rules.paired 为真时）都会去掉。
+    两种标签都在同一个切分里处理，保证代码块内的都不动。
+    """
     text = text or ""
-    if "[" not in text and "［" not in text:
+    if not text:
+        return text
+    wants_brackets = rules is not None and ("[" in text or "［" in text)
+    wants_paired = rules is not None and rules.paired and "<" in text
+    if not wants_brackets and not wants_paired:
         return text
     parts = _CODE_SPLIT.split(text)
     for i in range(0, len(parts), 2):  # 偶数位是普通文字，奇数位是代码
-        parts[i] = strip(parts[i], rules)
+        segment = parts[i]
+        if wants_brackets:
+            segment = strip(segment, rules)
+        if wants_paired:
+            segment = strip_paired(segment, rules)
+        parts[i] = segment
     return "".join(parts)
+
+
+# ---------- 成对尖括号标签（Drama 3） ----------
+def count_paired(text: str, rules: "EmotionRules | None") -> int:
+    """成对尖括号标签有几个（开闭各算一个）。未开启 paired 时恒为 0。"""
+    if rules is None or not rules.paired or not text:
+        return 0
+    return sum(1 for _ in _ANY_PAIRED.finditer(text))
+
+
+def mask_paired(text: str, rules: "EmotionRules | None") -> tuple:
+    """合成前把成对标签换成占位符，返回 (替换后的文本, 原始标签列表)。
+
+    为什么需要这一步：``main._prepare()`` 里的 ``_MD_MARK`` 会去掉 ``<>``，如果不管，
+    ``<soft>慢慢来。</soft>`` 到了 Fish 那边就只剩 ``soft慢慢来。/soft``，指令失效。
+    换成不含特殊字符的占位符后，markdown 清理、去 Emoji、去 @ 都不会碰它，
+    `unmask_paired()` 在合成前一刻还原。
+
+    代码块里的尖括号不动（和方括号标签的规则一致）。
+    """
+    text = text or ""
+    if rules is None or not rules.paired or "<" not in text:
+        return text, []
+    found: list = []
+
+    def _swap(segment: str) -> str:
+        def _repl(m: re.Match) -> str:
+            found.append(m.group(0))
+            return _MASK.format(len(found) - 1)
+
+        return _ANY_PAIRED.sub(_repl, segment)
+
+    parts = _CODE_SPLIT.split(text)
+    for i in range(0, len(parts), 2):
+        parts[i] = _swap(parts[i])
+    return "".join(parts), found
+
+
+def unmask_paired(text: str, tags) -> str:
+    """把 `mask_paired()` 的占位符还原成原始标签。"""
+    text = text or ""
+    if not tags or "\x00" not in text:
+        return text
+
+    def _repl(m: re.Match) -> str:
+        try:
+            index = int(m.group(1))
+        except (TypeError, ValueError):
+            return m.group(0)
+        return tags[index] if 0 <= index < len(tags) else ""
+
+    return _MASK_RE.sub(_repl, text)
+
+
+def strip_paired(text: str, rules: "EmotionRules | None") -> str:
+    """把成对尖括号标签整个去掉（开标签、闭标签、包住的文字都保留文字本身）。"""
+    if rules is None or not rules.paired or not text or "<" not in text:
+        return text or ""
+    return _ANY_PAIRED.sub("", text)
+
+
+def has_unpaired(text: str, rules: "EmotionRules | None") -> bool:
+    """有没有落单的成对标签（只有开没有闭，或者反过来）。
+
+    drama-3 遇到落单标签不会报错，但被包住的效果会作用到整段甚至整条，属于要提醒的情况。
+    """
+    if rules is None or not rules.paired or not text:
+        return False
+    opened: dict = {}
+    for m in _ANY_PAIRED.finditer(text):
+        name = m.group(2).lower()
+        is_close = bool(m.group(1))
+        depth = opened.get(name, 0)
+        if is_close:
+            opened[name] = max(0, depth - 1)
+        else:
+            opened[name] = depth + 1
+    return any(depth > 0 for depth in opened.values())
